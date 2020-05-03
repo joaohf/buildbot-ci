@@ -1,0 +1,9 @@
+[Unit]
+Description=Formats instance storage
+After=sys-devices-pci0000:00-0000:00:1f.0-nvme-nvme1-nvme0n1.device
+Requires=sys-devices-pci0000:00-0000:00:1f.0-nvme-nvme1-nvme0n1.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/mkfs.ext4 /dev/nvme0n1

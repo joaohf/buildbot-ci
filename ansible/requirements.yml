@@ -1,0 +1,13 @@
+---
+roles:
+  - src: https://github.com/joaohf/ansible-role-buildbot
+    version: master
+    name: trombik.buildbot
+
+  - src: https://github.com/joaohf/ansible-role-buildbot_worker
+    version: master
+    name: trombik.buildbot_worker
+
+  - src: https://github.com/joaohf/ansible-role-awscli
+    version: master
+    name: tommarshall.awscli

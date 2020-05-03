@@ -1,0 +1,13 @@
+[Unit]
+Description=Fix instance storage permissions
+Requires=mnt-yocto.mount
+After=mnt-yocto.mount
+Before=buildworker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/chown {{ buildbot_worker_user }}:{{ buildbot_worker_group }} /mnt/yocto
+
+[Install]
+WantedBy=multi-user.target

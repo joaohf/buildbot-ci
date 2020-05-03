@@ -1,0 +1,20 @@
+---
+- hosts: all
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars:
+    buildbot_worker_service: "buildbot-worker@default"
+  handlers:
+  - name: Restart buildbot_worker
+    service:
+      name: "{{ buildbot_worker_service }}"
+      state: restarted
+  tasks:
+    - name: Start buildbot worker
+      service:
+        name: "buildbot-worker@default"
+        enabled: true
+        state: started
+
+ 

@@ -1,0 +1,33 @@
+{
+  "variables": {
+    "region": "eu-north-1",
+    "ssh_username": "ubuntu",
+    "base_ami": "ami-0e850e0e9c20d9deb",
+    "instance_type": "t3.micro",
+    "subnet_id": ""
+  },
+  "builders": [
+    {
+      "profile": "terraform_iam_user",
+      "type": "amazon-ebs",
+      "region": "{{user `region` }}",
+      "subnet_id": "{{user `subnet_id` }}",
+      "source_ami": "{{user `base_ami`}}",
+      "instance_type": "{{user `instance_type` }}",
+      "ssh_username": "{{user `ssh_username`}}",
+      "ami_name": "buildbot-master-base",
+      "associate_public_ip_address": true,
+      "force_deregister": true,
+      "tags": {
+        "Name": "Packer-Ansible",
+        "Type": "master"
+      }
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "ansible",
+      "playbook_file": "../ansible/bb-master-ami.yml"
+    }
+  ]
+}

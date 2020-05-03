@@ -1,0 +1,63 @@
+---
+- hosts: tag_Type_master
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars:
+    buildbot_service: "buildmaster@default"
+    buildbot_user: buildbot
+    buildbot_group: buildbot
+    buildbot_root_dir: "/var/lib/buildbot"
+    buildbot_conf_dir: "{{ buildbot_root_dir }}/masters/default"
+    buildbot_conf_file: "{{ buildbot_conf_dir }}/master.cfg"
+    buildbot_executable: /usr/local/bin/buildbot
+  handlers:
+  - name: Restart buildbot
+    service:
+      name: "{{ buildbot_service }}"
+      state: restarted
+  tasks:
+    - name: Create master.cfg
+      template:
+        src: master-latent-worker.cfg.j2
+        dest: "{{ buildbot_conf_file }}"
+        validate: "{{ buildbot_executable }} checkconfig %s"
+        owner: "{{ buildbot_user }}"
+        group: "{{ buildbot_group }}"
+        mode: 0640
+      notify: Restart buildbot
+      tags:
+        - buildbot
+
+    - name: Install pygithub
+      pip:
+        name: "pygithub"
+        executable: pip3
+        state: present
+      tags:
+        - github
+
+    - name: Waits for port 8010
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 8010
+        delay: 15
+        state: started
+
+    - name: Create a github webhook that triggers buildbot on pull requests
+      github_webhook:
+        insecure_ssl: yes
+        content_type: form
+        secret: "{{ buildbot_github_webhook_secret }}"
+        repository: "{{ github_repository }}"
+        url: "{{ buildbot_aws_url }}/change_hook/github"
+        events:
+          - push
+        token: "{{ github_personal_access_tokens }}"
+        user: "{{ github_user }}"
+        state: present
+      tags:
+        - github
+    
+
+ 

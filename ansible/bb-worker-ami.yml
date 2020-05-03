@@ -1,0 +1,127 @@
+---
+- hosts: all
+  become: yes
+  become_user: root
+  become_method: sudo
+  roles:
+    - trombik.buildbot_worker
+    - role: tommarshall.awscli
+      vars:
+        awscli_pip_package: python3-pip
+        awscli_version: 1.18.15
+        pip_executable: pip3
+        awscli_users:
+          - username: "{{ buildbot_worker_user }}"
+            profiles:
+              - name: "{{ aws_profile }}"
+                access_key_id: "{{ aws_access_key_id }}"
+                secret_access_key: "{{ aws_secret_access_key }}"
+                region: eu-north-1
+                output: text
+
+  vars:
+    buildbot_worker_workdir: "/mnt/yocto"
+
+    buildbot_worker_flags_freebsd: |
+      buildbot_worker_basedir="{{ buildbot_worker_conf_dir }}"
+    buildbot_worker_flags_ubuntu: |
+      WORKER_ENABLED[1]=1                    # 1-enabled, 0-disabled
+      WORKER_NAME[1]="default"               # short name printed on start/stop
+      WORKER_USER[1]="buildbot"              # user to run worker as
+      WORKER_BASEDIR[1]="{{ buildbot_worker_conf_dir }}"  # basedir to worker (absolute path)
+      WORKER_OPTIONS[1]=""                   # buildbot options
+      WORKER_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
+
+    buildbot_worker_flags: "{% if ansible_os_family == 'FreeBSD' %}{{ buildbot_worker_flags_freebsd }}{% elif ansible_os_family == 'Debian' %}{{ buildbot_worker_flags_ubuntu }}{% endif %}"
+    buildbot_worker_config: |
+      import os
+      from buildbot_worker.bot import Worker
+      from twisted.application import service
+      basedir = '{{ buildbot_worker_conf_dir }}'
+      rotateLength = 10000000
+      maxRotatedFiles = 10
+      # if this is a relocatable tac file, get the directory containing the TAC
+      if basedir == '.':
+          import os.path
+          basedir = os.path.abspath(os.path.dirname(__file__))
+      # note: this line is matched against to check that this is a worker
+      # directory; do not edit it.
+      application = service.Application('buildbot-worker')
+      from twisted.python.logfile import LogFile
+      from twisted.python.log import ILogObserver, FileLogObserver
+      logfile = LogFile.fromFullPath(
+          os.path.join(basedir, "twistd.log"), rotateLength=rotateLength,
+          maxRotatedFiles=maxRotatedFiles)
+      application.setComponent(ILogObserver, FileLogObserver(logfile).emit)
+      # bb-master private IP
+      buildmaster_host = '10.1.0.10'
+      port = 9989
+      workername = 'bot1'
+      passwd = 'pass'
+      keepalive = 600
+      umask = 0o22
+      maxdelay = 300
+      numcpus = None
+      allow_shutdown = None
+      maxretries = None
+      s = Worker(buildmaster_host, port, workername, passwd, basedir,
+                 keepalive, umask=umask, maxdelay=maxdelay,
+                 numcpus=numcpus, allow_shutdown=allow_shutdown,
+                 maxRetries=maxretries)
+      s.setServiceParent(application)
+
+  tasks:
+    - name: Create yocto tmp directory
+      file:
+        path: /mnt/yocto
+        state: directory
+      tags:
+        - yocto
+
+    - name: Create systemd unit to format instance storage
+      template:
+        src: format-instance-storage.service.j2
+        dest: /etc/systemd/system/format-instance-storage.service
+        validate: sh -n %s
+      tags:
+        - yocto
+
+    - name: Enable format instance storage
+      service:
+        name: format-instance-storage.service
+        enabled: yes
+        daemon_reload: yes
+      tags:
+        - yocto
+
+    - name: Create systemd unit to mount instance storage
+      template:
+        src: mnt-yocto.mount.j2
+        dest: /etc/systemd/system/mnt-yocto.mount
+        validate: sh -n %s
+      tags:
+        - yocto
+
+    - name: Enable mount instance storage
+      service:
+        name: mnt-yocto.mount
+        enabled: yes
+        daemon_reload: yes
+      tags:
+        - yocto
+
+    - name: Create systemd unit to fix mount point permissions
+      template:
+        src: fix-yocto-mount.service.j2
+        dest: /etc/systemd/system/fix-yocto-mount.service
+        validate: sh -n %s
+      tags:
+          - yocto
+  
+    - name: Enable fix mount point permissions
+      service:
+        name: fix-yocto-mount.service
+        enabled: yes
+        daemon_reload: yes
+      tags:
+        - yocto

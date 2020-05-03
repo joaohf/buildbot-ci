@@ -1,0 +1,21 @@
+---
+- hosts: tag_Type_master
+  become: yes
+  become_user: root
+  become_method: sudo
+  tasks:
+    - name: Create a github webhook that triggers buildbot on pull requests
+      github_webhook:
+        insecure_ssl: yes
+        content_type: form
+        secret: "{{ buildbot_github_webhook_secret }}"
+        repository: "{{ github_repository }}"
+        url: "{{ buildbot_aws_url }}/change_hook/github"
+        token: "{{ github_personal_access_tokens }}"
+        user: "{{ github_user }}"
+        state: absent
+      tags:
+        - github
+    
+
+ 

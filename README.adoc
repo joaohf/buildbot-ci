@@ -1,0 +1,261 @@
+= buildbot-ci
+ifdef::env-github[]
+//Admonitions
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+:linkattrs:
+:imagesdir: https://github.com/joaohf/buildbot-ci/images
+endif::[]
+ifndef::env-github[]
+:imagesdir: ./images
+endif::[]
+:userhome: ~/
+:repohome: buildbot-ci
+:ansible: Ansible
+:ansible-home: https://www.ansible.com/
+:tf: Terraform
+:tf-home: https://www.terraform.io/
+:packer: Packer
+:packer-home: https://packer.io/
+:awscli: AWS Command Line Interface
+:awscli-home: https://aws.amazon.com/cli/
+:aws: AWS
+:bbm: buildbot master
+:bbw: buildbot worker
+:github: Github
+// Asciidoctor Front Matter
+:doctype: book
+:sectlinks:
+:icons: font
+:experimental:
+:sourcedir: .
+:imagesdir: images
+:toc:
+:toc-placement!:
+
+Steps needed in order to build a Continuous Integration on cloud as well all the configuration specific configuration.
+
+[WARNING]
+====
+The code and instructions fits to my purposes and requirements.
+
+However this repository could be useful if you are looking for how to do things using the tools that I used.
+====
+
+toc::[]
+
+== Motivation
+
+A long time ago I heard about https://buildbot.net/index.html#basics[buildbot project] as a framework to build https://en.wikipedia.org/wiki/Continuous_integration[Continuous Integration]. In that time I thought that it could be a waste of time because there are many powerful and friendly tools (like Jenkins, Bamboo, Gitlab) as well SaaS solutions like travisCI, circleCI. So why anyone would like to spend time configuring a buildbot project ?
+
+The quick answer is: flexibility and resource control when you need to build projects which use high CPU and disk resources.
+
+After a while trying to use https://en.wikipedia.org/wiki/Software_as_a_service[SaaS] tools to get work with a huge time consuming build, I gave up and change my mind to give a try and test buildbot.
+
+[NOTE]
+====
+CI SaaS tools are great. I use to use in my other projects. But for this particular case those tools don't fit.
+====
+
+To sum up, my aim is to provide a guide about how to use buildbot and tools that helped me when I was building the environment. There are many details captured by {packer}, {tf} and {ansible} configuration files and worth reading them in case of trying this out.
+
+== Tools
+
+{ansible-home}[{ansible}] :: is the tool to configure buildbot master server and any additional service needed. Like applying github webhook integration
+{tf-home}[{tf}] :: creates and destroys cloud infrastructure. The tool allows describing the cloud environment and versioning it using any source code control system
+{packer-home}[{packer}] :: creates machine images installing and configuring based on a template that can be easily reused
+{awscli-home}[{awscli}] :: AWS default command line tool
+
+Also three additional playbooks do all the buildbot configuration steps:
+
+https://github.com/joaohf/ansible-role-buildbot[ansible-role-buildbot] :: a multi OS role that configures and installs buildbot master
+https://github.com/joaohf/ansible-role-buildbot_worker[ansible-role-worker] :: also a multi OS role that does all the steps need to configure a buildbot worker
+https://github.com/joaohf/ansible-awscli[ansible-role-awscli] :: a basic role install and setup {awscli} 
+
+== Use case
+
+The main use case that this project solves is as follow:
+
+. A _developer_ pushes code or open a Pull Request on {github} repository
+. {github} calls the {bbm} webhook, previously configured
+.. {bbm} receives all the context to initiate a new worker
+.. a new latent {bbw} is spawned to handle the specific build context
+.. after finish the worker, the {bbm} sends the status and pull request back to {github}
+.. the latent {bbw} is finished after 10 minutes of inactivity
+. the _developer_ can see the build results on {github} or buildbot web view.
+
+[NOTE]
+====
+Maybe you are thinking that it is hard to buy the idea. Any CI SaaS does the same tasks.
+
+Sure and I agree. However, think about the possibilites to enhance your build CI using AWS services for example. E.g.: cache layers, increasing machine power, coordinate large scale tests.
+====
+
+== Configuration
+
+This repository has some steps in order to prepare the tools to work together.
+
+Ansible external roles need to be installed ::
+[source,bash]
+----
+ansible-galaxy install -r ansible/requirements.yml
+----
+
+Creates ssh key pair ::
+[source,bash]
+----
+ssh-keygen -t rsa -b 4096 -C "buildbot" -f ~/.ssh/buildbot.key
+----
+
+Add buildbot key to keychain ::
+[source,bash]
+----
+ssh-add ~/.ssh/buildboot.key
+----
+
+Setup AWS CLI :: the https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html#cli-quick-configuration[Quickly Configuring the AWS CLI] is a good guide about how to get start with AWS CLI.
+
+Create the {ansible} vault file password ::
+The file _{repohome}/ansible/.vault_ should be create with a valid password to decrypt sensitive variables from ansible
++
+[source,bash]
+----
+echo "MY PASS" > ansible/.vault
+----
+
+
+== Steps
+
+[NOTE]
+====
+All commands below are suppose to be running in {repohome} directory.
+====
+
+### Use ansible-vault to manage sensitive files
+
+The file _group_vars/tag_Type_master/vault.yml_ has sensitive data and should be protect using https://docs.ansible.com/ansible/latest/user_guide/vault.html[ansible-vault]. 
+
+[source,bash]
+----
+ansible-vault [edit | view] \
+  --vault-password-file .vault \
+  group_vars/tag_Type_master/vault.yml
+----
+
+This file should be updated when changed any AWS or Github access parameters.
+
+### Create the bootstrap AWS infrastructure
+
+The directory _networkTerraform_ has a {tf} code that creates a basic networking in AWS, just the necessary elements to run :packer: later.
+
+[source,bash]
+----
+cd networkTerraform
+terraform apply
+----
+
+### Create AMI images using {packer}
+
+After running the initial {tf} environment, {tf} will output a variable called *public_subnets*. {packer} will use that subnet to create the initial images there.
+
+Calling {packer} for each image template to create the images. When creating a _buildbot worker_ AMI, {packer} will need some extra variables from previous {tf} execution.
+
+[source,bash]
+----
+cd packer
+packer build -var 'subnet_id=<subnet output by terraform>' bb-master.json
+packer build -var 'subnet_id=<subnet output by terraform>' \
+    -var 'aws_profile=<aws buildbot profile>' \
+    -var 'aws_access_key_id=<aws buildpot access key>' \
+    -var 'aws_secret_access_key=<aws buildbot secret key>' \
+    bb-worker.json
+----
+
+{packer} creates two private AMI with all the software installed and configured by {ansible}.
+
+### Destroy the bootstrap AWS infrastructure
+
+After running the {packer} templates, The follow procedure destroys the bootstrap environment.
+
+[source,bash]
+----
+cd networkTerraform
+terraform destroy
+----
+
+### Create buildbot AWS infrastructure
+
+Running {tf} to create the buildbot infrastructure.
+
+[source,bash]
+----
+cd terraform
+terraform apply
+----
+
+### Configure {bbm}
+
+In the previously step, {tf} output some important variables that {ansible} need when running the playbook to setup the correct buildbot master configuration values.
+
+The follow variables should get from {tf}:
+
+* url-bb-master
+* public-subnets
+* security-groups
+
+And update the follow variables in the file _ansible/group_vars/tag_Type_master/vars.yml_:
+
+* buildbot_aws_subnet_id, subnet where the buildmaster worker will live
+* buildbot_aws_security_group_id: security group to attach each worker
+* buildbot_aws_url: public https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html[Elastic IP Address] where buildbot master is receiving requests
+
+Also, any other buildbot parameter should be updated before running the _ansible/bb-master-configure.yml_ playbook.
+
+[source,bash]
+----
+cd ansible
+ansible-playbook \
+  --vault-password-file .vault \
+  -u ubuntu \
+  -i config_aws_ec2.yml \
+  -T 300 \
+  bb-master-configure.yml
+----
+
+### Teardown {bbm}
+
+The playbook _ansible/bb-master-teardown.yml_ deal with all the operations when removing any configuration done in external services, like {github}.
+
+[source,bash]
+----
+cd ansible
+ansible-playbook \
+  --vault-password-file .vault \
+  -u ubuntu \
+  -i config_aws_ec2.yml \
+  -T 300 \
+  bb-master-teardown.yml
+----
+
+### Destroy AWS infrastructure
+
+The infrastructure can be destroyed using {tf}
+
+[source,bash]
+----
+cd terraform
+terraform destroy
+----
+
+[bibliography]
+## References
+
+- [[[buildbot-tale]]] Buildbot: a tale with examples of one more continuous integration system,   https://sudonull.com/post/977-Buildbot-a-tale-with-examples-of-one-more-continuous-integration-system
+
+- [[[buildbot]]] Buildbot Manual, http://docs.buildbot.net/current/index.html
+
+- [[autobuilder]] Autobuilder2 presentation at the Yocto Project summit 2019, https://koansoftware.com/autobuilder2-talk-yocto-project/
+

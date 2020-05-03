@@ -1,0 +1,20 @@
+# terraform output
+buildbot_aws_instance_profile: 'test_profile'
+buildbot_aws_subnet_id: 'subnet-06c6bebe016b8a142'
+buildbot_aws_security_group_id: 'sg-06dbbeecb2662977a'
+buildbot_aws_url: "{{ vault_buildbot_aws_url }}"
+
+# default variables
+buildbot_aws_region: "{{ vault_buildbot_aws_region }}"
+buildbot_aws_secret_identifier: "{{ vault_buildbot_aws_secret_identifier }}"
+buildbot_aws_identifier: "{{ vault_buildbot_aws_identifier }}"
+buildbot_aws_worker_instance_type: "m5d.large"
+buildbot_aws_worker_ami: "ami-07f418f71c5244219"
+buildbot_admin_email: "{{ vault_buildbot_admin_email }}"
+buildbot_github_webhook_secret: "{{ vault_buildbot_github_webhook_secret}}"
+github_personal_access_tokens: "{{ vault_github_personal_access_tokens }}"
+github_repository: "joaohf/meta-erlang"
+github_user: joaohf
+
+github_buildbot_clientid: "{{ vault_github_buildbot_clientid }}"
+github_buildbot_clientsecret: "{{ vault_github_buildbot_clientsecret }}"

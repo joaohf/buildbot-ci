@@ -1,0 +1,13 @@
+plugin: aws_ec2
+boto_profile: terraform_iam_user
+regions:
+  - eu-north-1
+keyed_groups:
+  - key: tags.Name
+    prefix: tag_Name_
+    separator: ""
+  - key: tags.Type
+    prefix: tag_Type_
+    separator: ""
+groups:
+  master: "'Type' in (tags|list)"

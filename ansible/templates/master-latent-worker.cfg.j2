@@ -1,0 +1,201 @@
+# Managed by ansible
+from buildbot.plugins import *
+from datetime import timedelta
+
+c = BuildmasterConfig = {}
+c['buildbotNetUsageData'] = None
+c['title'] = "Hello World CI"
+c['titleURL'] = "https://buildbot.github.io/hello-world/"
+c['buildbotURL'] = "{{ buildbot_aws_url }}/"
+c['protocols'] = {'pb': {'port': 9989}}
+
+c['workers'] = [
+    worker.EC2LatentWorker('bot1', 'pass', '{{ buildbot_aws_worker_instance_type }}',
+                           region='{{ buildbot_aws_region }}',
+                           ami='{{ buildbot_aws_worker_ami }}',
+                           identifier='{{ buildbot_aws_identifier }}',
+                           secret_identifier='{{ buildbot_aws_secret_identifier }}',
+                           subnet_id='{{ buildbot_aws_subnet_id }}',
+                           security_group_ids=['{{ buildbot_aws_security_group_id }}'],
+                           keypair_name='buildbot_latent_worker',
+                           instance_profile_name='{{ buildbot_aws_instance_profile }}',
+                           tags={'BuildBot': 'Latent'},
+                           block_device_map=[{"DeviceName": "/dev/sdg", "VirtualName": "ephemeral0"}])
+]
+
+c['change_source'] = []
+
+c['schedulers'] = []
+c['schedulers'].append(schedulers.AnyBranchScheduler(
+                            name="meta-erlang",
+                            change_filter=util.ChangeFilter(branch_re="^test/.*"),
+                            treeStableTimer=3,
+                            builderNames=["meta-erlang"]))
+c['schedulers'].append(schedulers.ForceScheduler(
+                            name="meta-erlang-force",
+                            builderNames=["meta-erlang"]))
+
+
+class OEEnvStep(steps.ShellCommand):
+    def __init__(self, command='', **kwargs):
+        kwargs['command'] = [
+            'bash', '-c', 'source poky/oe-init-build-env build; %s' % command
+        ]
+        kwargs['interruptSignal'] = 'TERM'
+        steps.ShellCommand.__init__(self, **kwargs)
+
+clone_meta_erlang = steps.Git(repourl="https://github.com/joaohf/meta-erlang", method="clobber")
+
+def checkForMasterBranch(step):
+    if step.getProperty("branch") == "master":
+       return True
+    return False
+
+# TODO: switch to properties
+yocto_tag = "yocto-3.1"
+yocto_version = "dunfell"
+
+prepare_environment = steps.ShellSequence(
+        name="prepare environment",
+        commands=[
+            util.ShellArg(
+                command=["git", "clone", "--depth", "1", "-b", yocto_tag,
+                         "git://git.yoctoproject.org/poky"],
+                warnOnFailure=True, logfile="clone poky"),
+            util.ShellArg(
+                command=["git", "clone", "--depth", "1", "-b", yocto_version,
+                         "https://github.com/openembedded/meta-openembedded.git", "meta-oe"],
+                logfile="clone meta-oe", warnOnFailure=True),
+            util.ShellArg(
+                command=["ln", "-sf", ".", "meta-erlang"],
+                logfile="ln meta-erlang", warnOnFailure=True)
+        ],
+        warnOnFailure=True,
+        description="clonning additional repositories",
+        descriptionDone="done")
+
+configure_environment = steps.ShellCommand(name="initial source",
+        command=['bash', '-c', 'source poky/oe-init-build-env build'],
+        haltOnFailure=True,
+        env={'TEMPLATECONF': '../.circleci'},
+        description="initialize build directory",
+        descriptionDone="done")
+
+fetch_all = OEEnvStep(command='bitbake erlang --runall=fetch -k')
+
+build_erlang = OEEnvStep(command='bitbake erlang')
+
+build_yaws = OEEnvStep(command='bitbake yaws')
+build_tsung = OEEnvStep(command='bitbake tsung')
+build_ejabberd = OEEnvStep(command='bitbake ejabberd')
+build_rabbitmq = OEEnvStep(command='bitbake rabbitmq')
+build_emqx = OEEnvStep(command='bitbake emqx')
+
+dl_tarball = "downloads" + "-" + yocto_tag + "-" + yocto_version + ".tar"
+sstate_cache_tarball = "sstate-cache" + "-" + yocto_tag + "-" + yocto_version + ".tar"
+
+s3_load_dl = steps.ShellCommand(name="load s3 bucket: s3-yocto downloads",
+        command="aws s3 cp " + "s3://s3-yocto/downloads/" + dl_tarball + \
+                " - --storage-class ONEZONE_IA | tar xf -",
+        haltOnFailure=False,
+        alwaysRun=True,
+        warnOnWarnings=True,
+        description="load s3 yocto-downloads",
+        descriptionDone="loaded")
+
+s3_save_dl = steps.ShellCommand(name="save s3 bucket: s3-yocto downloads",
+        command="tar c build/downloads | aws s3 cp - " + "s3://s3-yocto/downloads/" + dl_tarball + \
+                " --storage-class ONEZONE_IA",
+        haltOnFailure=True,
+        warnOnWarnings=True,
+        alwaysRun=True,
+        doStepIf=checkForMasterBranch,
+        description="save s3 yocto-downloads",
+        descriptionDone="saved")
+
+s3_load_sstate_cache = steps.ShellCommand(name="load s3 bucket: s3-yocto sstate-cache",
+        command="aws s3 cp " + "s3://s3-yocto/sstate-cache/" + sstate_cache_tarball + \
+                " - --storage-class ONEZONE_IA | tar xf -",
+        haltOnFailure=False,
+        alwaysRun=True,
+        description="load s3 yocto sstate-cache",
+        descriptionDone="loaded")
+
+s3_save_sstate_cache = steps.ShellCommand(name="save s3 bucket: s3-yocto sstate-cache",
+        command="tar c build/sstate-cache | aws s3 cp - " + "s3://s3-yocto/sstate-cache/" + \
+                 sstate_cache_tarball + " --storage-class ONEZONE_IA",
+        haltOnFailure=True,
+        doStepIf=checkForMasterBranch,
+        description="save s3 yocto sstate-cache",
+        descriptionDone="saved")
+
+meta_erlang = util.BuildFactory()
+meta_erlang.workdir = "/mnt/yocto/meta-erlang"
+meta_erlang.addStep(clone_meta_erlang)
+meta_erlang.addStep(prepare_environment)
+meta_erlang.addStep(configure_environment)
+meta_erlang.addStep(s3_load_dl)
+meta_erlang.addStep(s3_load_sstate_cache)
+#meta_erlang.addStep(fetch_all)
+meta_erlang.addStep(build_erlang)
+meta_erlang.addStep(build_yaws)
+meta_erlang.addStep(build_tsung)
+meta_erlang.addStep(build_ejabberd)
+meta_erlang.addStep(build_rabbitmq)
+meta_erlang.addStep(build_emqx)
+meta_erlang.addStep(s3_save_dl)
+meta_erlang.addStep(s3_save_sstate_cache)
+
+c['builders'] = []
+c['builders'].append(
+    util.BuilderConfig(name="meta-erlang",
+                       description="QA",
+                       workernames=["bot1"],
+                       factory=meta_erlang))
+
+context = util.Interpolate("buildbot/%(prop:buildername)s")
+gs = reporters.GitHubStatusPush(token='{{ github_personal_access_tokens }}',
+                                context=context,
+                                startDescription='Build started.',
+                                endDescription='Build done.',
+                                verbose=True)
+gc = reporters.GitHubCommentPush(token='{{ github_personal_access_tokens }}',
+                                 startDescription='Build started.',
+                                 endDescription='Build done.',
+                                 verbose=True)
+
+c['services'] = []
+c['services'].append(gs)
+c['services'].append(gc)
+
+c['www'] = dict(port=8010,
+                plugins=dict(waterfall_view={}, console_view={}, grid_view={}))
+
+c['www']['authz'] = util.Authz(
+        allowRules = [
+                util.AnyEndpointMatcher(role="admins")
+        ],
+        roleMatchers = [
+                util.RolesFromEmails(admins=["{{ buildbot_admin_email }}"])
+        ]
+)
+c['www']['auth'] = util.GitHubAuth("{{ github_buildbot_clientid }}",
+                                   "{{ github_buildbot_clientsecret }}",
+                                   apiVersion=4)
+
+# GitHub webhook receiver
+c['www']['change_hook_dialects'] = {
+        'github': {
+                'secret': '{{ buildbot_github_webhook_secret }}',
+                'strict': True,
+        }
+}
+c['db'] = {
+    'db_url' : "sqlite:///state.sqlite",
+}
+
+#c['configurators'] = [util.JanitorConfigurator(
+#    logHorizon=timedelta(weeks=4),
+#    hour=12,
+#    dayOfWeek=6
+#)]

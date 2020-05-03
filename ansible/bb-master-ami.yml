@@ -1,0 +1,58 @@
+---
+- hosts: all
+  become: yes
+  become_user: root
+  become_method: sudo
+  roles:
+    - trombik.buildbot
+  vars:
+    buildbot_executable: /usr/local/bin/buildbot
+    buildbot_conf_dir: "{% if ansible_os_family == 'Debian' %}{{ buildbot_root_dir }}/masters/default{% else %}{{ buildbot_root_dir }}{% endif %}"
+    buildbot_flags_ubuntu: |
+      MASTER_ENABLED[1]=1
+      MASTER_NAME[1]="default"
+      MASTER_USER[1]="buildbot"
+      MASTER_BASEDIR[1]="{{ buildbot_conf_dir }}"
+      MASTER_OPTIONS[1]=""
+      MASTER_PREFIXCMD[1]=""
+    buildbot_flags: "{% if ansible_os_family == 'FreeBSD' %}{{ buildbot_flags_freebsd }}{% elif ansible_os_family == 'Debian' %}{{ buildbot_flags_ubuntu }}{% endif %}"
+    buildbot_master_cfg_content: |
+      from buildbot.plugins import *
+      c = BuildmasterConfig = {}
+      c['workers'] = [worker.Worker("bot1", "pass")]
+      c['protocols'] = {'pb': {'port': 9989}}
+      c['change_source'] = []
+      c['change_source'].append(changes.GitPoller(
+              'git://github.com/buildbot/hello-world.git',
+              workdir='gitpoller-workdir', branch='master',
+              pollInterval=300))
+      c['schedulers'] = []
+      c['schedulers'].append(schedulers.SingleBranchScheduler(
+                                  name="all",
+                                  change_filter=util.ChangeFilter(branch='master'),
+                                  treeStableTimer=None,
+                                  builderNames=["runtests"]))
+      c['schedulers'].append(schedulers.ForceScheduler(
+                                  name="force",
+                                  builderNames=["runtests"]))
+      factory = util.BuildFactory()
+      factory.addStep(steps.Git(repourl='git://github.com/buildbot/hello-world.git', mode='incremental'))
+      factory.addStep(steps.ShellCommand(command=["trial", "hello"],
+                                         env={"PYTHONPATH": "."}))
+      c['builders'] = []
+      c['builders'].append(
+          util.BuilderConfig(name="runtests",
+            workernames=["bot1"],
+            factory=factory))
+      c['services'] = []
+      c['title'] = "Hello World CI"
+      c['titleURL'] = "https://buildbot.github.io/hello-world/"
+      c['buildbotURL'] = "http://localhost:8010/"
+      c['www'] = dict(port=8010,
+                      plugins=dict(waterfall_view={}, console_view={}, grid_view={}))
+      c['db'] = {
+          'db_url' : "sqlite:///state.sqlite",
+      }
+  
+    buildbot_extra_packages: "{% if ansible_os_family == 'Debian' %}[ 'python3-pip' ]{% elif ansible_os_family == 'RedHat' %}[ 'python36-pip', 'python36-devel' ]{% else %}[ 'devel/py-buildbot-www' ]{% endif %}"
+    buildbot_extra_pip_packages: "{% if ansible_os_family == 'Debian' %}[ 'txrequests', 'buildbot-www', 'buildbot-waterfall-view', 'buildbot-console-view', 'buildbot-grid-view' ]{% else %}[]{% endif %}"

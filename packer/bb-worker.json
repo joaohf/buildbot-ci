@@ -1,0 +1,43 @@
+{
+  "variables": {
+    "region": "eu-north-1",
+    "ssh_username": "ubuntu",
+    "base_ami": "ami-0b7937aeb16a7eb94",
+    "instance_type": "m5d.large",
+    "subnet_id": "",
+    "aws_profile": "",
+    "aws_access_key_id": "",
+    "aws_secret_access_key": ""
+  },
+  "builders": [
+    {
+      "profile": "terraform_iam_user",
+      "type": "amazon-ebs",
+      "region": "{{user `region` }}",
+      "subnet_id": "{{user `subnet_id` }}",
+      "source_ami": "{{user `base_ami`}}",
+      "instance_type": "{{user `instance_type` }}",
+      "ssh_username": "{{user `ssh_username`}}",
+      "ami_name": "buildbot-worker-base-bot1",
+      "associate_public_ip_address": true,
+      "force_deregister": true,
+      "ami_block_device_mappings": [
+        {
+          "device_name": "/dev/sdg",
+          "virtual_name": "ephemeral0"
+        }
+      ],
+      "tags": {
+        "Name": "Packer-Ansible",
+        "Type": "worker"
+      }
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "ansible",
+      "playbook_file": "../ansible/bb-worker-ami.yml",
+      "extra_arguments": "-e aws_profile={{user `aws_profile`}} -e aws_access_key_id={{user `aws_access_key_id`}} -e aws_secret_access_key={{user `aws_secret_access_key`}}"
+    }
+  ]
+}
